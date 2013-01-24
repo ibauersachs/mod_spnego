@@ -1,0 +1,4 @@
+src/win32-*
+*.sdf
+*.opensdf
+*.suo
