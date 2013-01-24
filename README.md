@@ -27,6 +27,10 @@ To enable it on a site or directory, add the following directives to it:
 You might need to install the Visual C++ Runtime Libraries if they're not
 already there.
 
+Binary download
+===============
+Is available at <http://sourceforge.net/projects/modspnego/files/Release/1.0/mod_spnego.so/download>
+
 Parameters
 ==========
 
