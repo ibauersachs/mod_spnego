@@ -57,7 +57,7 @@ The version available here has some limitations compared to the original
 version:
 
 *   Windows only
-*   Apache >= 2.2 only
+*   Apache 2.2 only (it does NOT work on 2.4!)
 
 Contrary to the original it works reliable under high load conditions,
 but no warranty whatsoever is made that it is fit for any purpose.
