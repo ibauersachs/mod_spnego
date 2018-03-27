@@ -6,10 +6,12 @@
  *
  * Author: Frank Balluffi and Markus Moeller
  * Cleanup: Ingo Bauersachs
+ * Memory leak treat: Jan Boháč
  *
  * Copyright (C) 2002-2007 Frank Balluffi and Markus Moeller. All rights
  * reserved.
  * Copyright (C) 2012 Ingo Bauersachs
+ * Copyright (C) 2017 Jan Boháč
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -192,12 +194,12 @@ static int handleSpnegoToken(
     server_sec_buffer.cbBuffer = 0;
     server_sec_buffer.pvBuffer = NULL;
     server_sec_buffer.BufferType = SECBUFFER_TOKEN;
-	CredHandle server_creds;
+    CredHandle server_creds;
 
     // try to authenticate with all configured Kerberos service names
     LPSTR krb5_service_name = apr_pstrdup(request->connection->pool, directoryConfig->krb5ServiceName);
     SECURITY_STATUS result;
-	SECURITY_STATUS credhandleResult;
+    SECURITY_STATUS credhandleResult;
     if(!conn_config->service_name)
     {
         conn_config->service_name = apr_strtok(krb5_service_name, " ", &conn_config->last_service_name);
@@ -206,17 +208,15 @@ static int handleSpnegoToken(
     while(conn_config->service_name != NULL)
     {
         ap_log_rerror(APLOG_MARK, PORTABLE_APLOG_INFO, request, "mod_spnego: Try service name %s", conn_config->service_name);
-		// hypothesis, declaration should be elsewhere       
-		// CredHandle server_creds;
         TimeStamp expiry;
         result = AcquireCredentialsHandle(
             conn_config->service_name,
             "Negotiate",
             SECPKG_CRED_INBOUND,
-            NULL,		// no logon id
-            NULL,		// no auth data
-            NULL,		// no get key fn
-            NULL,		// no get key arg
+            NULL,       // no logon id
+            NULL,       // no auth data
+            NULL,       // no get key fn
+            NULL,       // no get key arg
             &server_creds,
             &expiry
         );
@@ -251,8 +251,7 @@ static int handleSpnegoToken(
         {
             logSSPIError(APLOG_MARK, APLOG_ERR, request, "mod_spnego: AcceptSecurityContext failed", result);
             conn_config->service_name = apr_strtok(NULL, " ", &conn_config->last_service_name);
-			// oprava JB 6.9.2017 uvolneni credential handle
-			credhandleResult = FreeCredentialsHandle(&server_creds);
+            credhandleResult = FreeCredentialsHandle(&server_creds); // credential handle not longer needed, free it to prevent memory leak
             continue; // try next service name
         }
         else
@@ -267,8 +266,7 @@ static int handleSpnegoToken(
                     ap_log_rerror(APLOG_MARK, PORTABLE_APLOG_ERR, request, "mod_spnego: apr_pcalloc failed for *server_token");
                     DeleteSecurityContext(conn_config->security_context);
                     conn_config->security_context = NULL;
-					// oprava JB 6.9.2017
-					credhandleResult = FreeCredentialsHandle(&server_creds);
+                    credhandleResult = FreeCredentialsHandle(&server_creds); // credential handle not longer needed, free it to prevent memory leak
                     return HTTP_INTERNAL_SERVER_ERROR;
                 }
                 memcpy(*server_token, server_sec_buffer.pvBuffer, server_sec_buffer.cbBuffer);
@@ -279,13 +277,12 @@ static int handleSpnegoToken(
         }
     }
 
-	if (!conn_config->service_name)
-	{
-		logSSPIError(APLOG_MARK, APLOG_ERR, request, "mod_spnego: handleSpnegoToken failed, none of the service names accepted the client token", result);
-		DeleteSecurityContext(conn_config->security_context);
-		conn_config->security_context = NULL;
-		// oprava JB 6.9.2017 uvolneni credential handle
-		credhandleResult = FreeCredentialsHandle(&server_creds);
+    if (!conn_config->service_name)
+    {
+        logSSPIError(APLOG_MARK, APLOG_ERR, request, "mod_spnego: handleSpnegoToken failed, none of the service names accepted the client token", result);
+        DeleteSecurityContext(conn_config->security_context);
+        conn_config->security_context = NULL;
+        credhandleResult = FreeCredentialsHandle(&server_creds); // credential handle not longer needed, free it to prevent memory leak
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
@@ -297,11 +294,10 @@ static int handleSpnegoToken(
         if (result != SEC_E_OK)
         {
             logSSPIError(APLOG_MARK, APLOG_ERR, request, "mod_spnego: QueryContextAttributes failed", result);
-			// oprava JB 6.9.2017 uvolneni security contextu
-			DeleteSecurityContext(conn_config->security_context);
-			conn_config->security_context = NULL;
-			// oprava JB 6.9.2017 uvolneni credential handle
-			credhandleResult = FreeCredentialsHandle(&server_creds);
+            // free security context, it is no longer needed
+            DeleteSecurityContext(conn_config->security_context);
+            conn_config->security_context = NULL;
+            credhandleResult = FreeCredentialsHandle(&server_creds); // credential handle not longer needed, free it to prevent memory leak
             return HTTP_INTERNAL_SERVER_ERROR;
         }
 
@@ -313,7 +309,7 @@ static int handleSpnegoToken(
         {
             request->user = apr_pstrdup(request->pool, names.sUserName);
         }
-		
+
         ap_log_rerror(APLOG_MARK, PORTABLE_APLOG_INFO, request, "mod_spnego: setting connection user to %s", request->user);
         conn_config->user = apr_pstrdup(request->connection->pool, request->user);
 
@@ -323,16 +319,14 @@ static int handleSpnegoToken(
 
         DeleteSecurityContext(conn_config->security_context);
         conn_config->security_context = NULL;
-		// oprava JB 6.9.2017 uvolneni credential handle
-		credhandleResult = FreeCredentialsHandle(&server_creds);
+        credhandleResult = FreeCredentialsHandle(&server_creds); // credential handle not longer needed, free it to prevent memory leak
 
         return OK;
     }
     else if(result == SEC_I_CONTINUE_NEEDED)
     {
         // nothing more to do, just send the server's token to the client
-		// oprava JB 6.9.2017 uvolneni credential handle
-		credhandleResult = FreeCredentialsHandle(&server_creds);
+        credhandleResult = FreeCredentialsHandle(&server_creds); // credential handle not longer needed, free it to prevent memory leak
 
     }
     else
@@ -340,8 +334,7 @@ static int handleSpnegoToken(
         // some other failure occurred, clean up
         DeleteSecurityContext(conn_config->security_context);
         conn_config->security_context = NULL;
-		// oprava JB 6.9.2017 uvolneni credential handle
-		credhandleResult = FreeCredentialsHandle(&server_creds);
+        credhandleResult = FreeCredentialsHandle(&server_creds); // credential handle not longer needed, free it to prevent memory leak
 
     }
     return HTTP_UNAUTHORIZED;
@@ -510,9 +503,9 @@ static int authorize_user(
     /* Check AuthType. */
     authType = ap_auth_type(request);
 
-	if (!authType || strcasecmp(authType, "SPNEGO"))
-	{
-		ap_log_rerror(APLOG_MARK, PORTABLE_APLOG_INFO, request, "mod_spnego: unrecognized AuthType \'%s\'", authType ? authType : "NULL");
+    if (!authType || strcasecmp(authType, "SPNEGO"))
+    {
+        ap_log_rerror(APLOG_MARK, PORTABLE_APLOG_INFO, request, "mod_spnego: unrecognized AuthType \'%s\'", authType ? authType : "NULL");
 
         return DECLINED;
     }
@@ -580,10 +573,10 @@ static int authorize_user(
     if (!methodRestricted)
     {
         ap_log_rerror(APLOG_MARK, PORTABLE_APLOG_INFO, request, "mod_spnego: authorize_user returning OK");
-		
+
         return OK;
     }
-	
+
     ap_log_rerror(APLOG_MARK, PORTABLE_APLOG_INFO, request, "access to %s failed, reason: user %s not allowed access", request->uri, request->user);
     ap_log_rerror(APLOG_MARK, PORTABLE_APLOG_INFO, request, "mod_spnego: authorize_user returning HTTP_UNAUTHORIZED");
     return HTTP_UNAUTHORIZED;
